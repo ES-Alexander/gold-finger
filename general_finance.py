@@ -37,8 +37,13 @@ class Account(object):
 
     def __str__(self):
         ''' A human-readable representation of this Account. '''
-        print('Account ({!s}):\n\tNumber: {!s}\n\tBalance: {!s}'.format(
-              self.name, self.number, self.balance))
+        return 'Account ({!s}):\n\tNumber: {!s}\n\tBalance: ${!s}'.format(
+              self.name, self.number, self.balance)
+
+    def __repr__(self):
+        ''' A formal representation of this Account. '''
+        return 'Account(number={!r}, name={!r}, finder={!r}, current_bal={!r})'\
+               .format(self.number, self.name, self.finder, self.balance)
 
 class Transaction(object):
     ''' '''
@@ -65,6 +70,7 @@ class Transaction(object):
         self.amount = amount
         self.reason = reason
         self.tags = tags
+        self.unit = unit
 
         self.perform_transaction()
 
@@ -79,16 +85,17 @@ class Transaction(object):
 
     def __str__(self):
         ''' A human-readable string representation of this Transaction. '''
-        print('Transaction:\n\t {!s}{!s} from {!s} to {!s} on {!s}'.format(
-            self.unit, self.amount, self.sender, self.receiver))
+        ret = 'Transaction:\n\t {!s}{!s} from {!s} to {!s} on {!s}'.format(
+            self.unit, self.amount, self.sender, self.receiver)
         if reason:
-            print('Reason: "{!s}"'.format(reason))
+            ret += '\nReason: "{!s}"'.format(reason)
         if tags:
-            print('Tags: {!s}'.format(', '.format(tags)))
+            ret += '\nTags: {!s}'.format(', '.format(tags))
+        return ret
 
     def __repr__(self):
         ''' A formal representation of this Transaction. '''
-        print('Transaction(sender={!r}, receiver={!r}, date={!r}, amount={!r},'
-              'reason={!r}, tags={!r}, unit={!r})'.format(
+        return 'Transaction(sender={!r}, receiver={!r}, date={!r}, amount={!r}'\
+               ', reason={!r}, tags={!r}, unit={!r})'.format(
                   self.sender, self.receiver, self.date, self.amount,
-                  self.reason, self.tags, self.unit))
+                  self.reason, self.tags, self.unit)
