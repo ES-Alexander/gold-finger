@@ -72,10 +72,10 @@ class Transaction(object):
         self.tags = tags
         self.unit = unit
 
-        self.perform_transaction()
+        self._perform_transaction()
 
-    def perform_transaction(self):
-        ''' '''
+    def _perform_transaction(self):
+        ''' Move the desired amount from the sender to the receiver. '''
         try:
             self.sender.change_balance(-self.amount, self.date)
         except: pass
