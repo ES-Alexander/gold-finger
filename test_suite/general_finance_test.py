@@ -27,12 +27,12 @@ class AccountTests(TestRun):
                         prop, obj.__dict__[prop], self.__dict__[prop])
 
     def test_init_default(self):
-        ''' Test an Account with the default balance. '''
+        ''' Test an Account initialisation with the default balance. '''
         test_account = Account(self.number, self.name, self.finder)
         self.property_test(self.props[:-1], test_account)
 
     def test_init_balance(self):
-        ''' Test an Account with a specified balance. '''
+        ''' Test an Account initialisation with a specified balance. '''
         test_account = Account(self.number, self.name, self.finder,
                                self.balance)
         self.property_test(self.props, test_account)
