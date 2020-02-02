@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 
-import testrun.TestRun as TestRun
+from testrun.TestRun import TestRun, TestGroup, Redirect
 import sys
 sys.path.append('..')
 from general_finance import *
 from datetime import date
 
-class AccountTests(TestRun.TestRun):
+class AccountTests(TestRun):
     ''' A test-suite for the Account class. '''
     def __init__(self):
         ''' Create the test suite with relevant variables. '''
@@ -59,12 +59,12 @@ class AccountTests(TestRun.TestRun):
             self.balance_history = old_balance_history
             self.time_history = old_time_history
 
-class TransactionTests(TestRun.TestRun):
+class TransactionTests(TestRun):
     ''' A test-suite for the Transaction class. '''
     pass
 
 if __name__ == '__main__':
     account_tests = AccountTests()
     transaction_tests = TransactionTests()
-    tests = TestRun.TestGroup(account_tests, transaction_tests)
+    tests = TestGroup(account_tests, transaction_tests)
     tests.run_tests()
