@@ -3,6 +3,7 @@
 from testrun.TestRun import TestRun, TestGroup, Redirect
 import sys
 sys.path.append('..')
+print(sys.path)
 from general_finance import *
 from datetime import date
 

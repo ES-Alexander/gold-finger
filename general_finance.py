@@ -99,3 +99,21 @@ class Transaction(object):
                ', reason={!r}, tags={!r}, unit={!r})'.format(
                   self.sender, self.receiver, self.date, self.amount,
                   self.reason, self.tags, self.unit)
+
+def accounts_from_data(filename, account_number=None, skip_lines=0
+                       cols={'date':0, 'balance':1, 'description':2,
+                             'account_number':None}):
+    ''' '''
+    with open(filename, 'r') as data:
+        accounts = {}
+        transactions = []
+        count = 0
+        for line in data:
+            if count < skip_lines: # skip the first 'skip_lines' lines
+                count += 1
+                continue
+            row_data = line.split(',')
+            date = get_date(row_data[cols['date']])
+            # TODO the rest
+            # figure out logic for different file layouts and tracking
+            #   transactions across multiple accounts from different files
