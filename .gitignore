@@ -1,7 +1,9 @@
 # don't track these things
 *__pycache__*
 desktop.ini
-
-*.txt # settings files, etc
-*.csv # data files
-*.ipynb_checkpoints* # Jupyter notebook checkpoints
+# settings files, etc
+*.txt
+# data files
+*.csv
+# Jupyter notebook checkpoints
+*.ipynb_checkpoints*
