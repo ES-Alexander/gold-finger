@@ -7,3 +7,5 @@ desktop.ini
 *.csv
 # Jupyter notebook checkpoints
 *.ipynb_checkpoints*
+# database folder
+*db*
