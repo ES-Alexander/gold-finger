@@ -114,6 +114,7 @@ def accounts_from_data(filename, account_number=None, skip_lines=0
                 continue
             row_data = line.split(',')
             date = get_date(row_data[cols['date']])
+
             # TODO the rest
             # figure out logic for different file layouts and tracking
             #   transactions across multiple accounts from different files
