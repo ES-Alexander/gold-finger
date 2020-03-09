@@ -251,7 +251,6 @@ class Stock(object):
         return [self.Purchase(**kwargs) \
                 for kwargs in self._metadata[self.PURCHASED]]
 
-    @property
     def get_dividend_history(self):
         return [self.Dividend(**kwargs) \
                 for kwargs in self._metadata[self.DIVIDENDS]]
