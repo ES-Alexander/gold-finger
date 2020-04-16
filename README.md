@@ -1,4 +1,4 @@
-# nekbeard-investor
+# gold-finger
 Finance and stocks tracking software - group-compatible
 
 ## Work in progress!
