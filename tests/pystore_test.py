@@ -19,19 +19,19 @@ with open('accounts.txt') as accounts:
 data = pd.read_csv('Data.csv')
 
 DATE        = 'date'
-ACCOUNT_NO  = 'account_no'
-CREDIT      = 'credit'
 DEBIT       = 'debit'
+CREDIT      = 'credit'
 BALANCE     = 'balance'
+ACCOUNT_NO  = 'account_no'
 DESCRIPTION = 'description'
 
 # rename data columns with desired names (map provided by user?)
 name_map = {
-    'Date': DATE,
-    'Bank Account'  : ACCOUNT_NO,
-    'Credit Amount' : CREDIT,
+    'Date'          : DATE,
     'Debit Amount'  : DEBIT,
+    'Credit Amount' : CREDIT,
     'Balance'       : BALANCE,
+    'Bank Account'  : ACCOUNT_NO,
     'Narrative'     : DESCRIPTION,
 }
 data.rename(columns=name_map, inplace=True)
