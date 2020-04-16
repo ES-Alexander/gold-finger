@@ -1,8 +1,17 @@
 #!/usr/bin/env python3
 
+'''
+Pystore.path
+-> users (stores)
+    -> accounts (collections)
+        -> transactions/stocks (items)
+'''
+
+import pystore
+import requests
 import numpy as np
 import pandas as pd
-import pystore
+url_query = lambda url, *a, **kw: requests.get('https://www.'+url, *a, **kw)
 
 class Account(object):
     ''' An account for tracking one (or more) values over time. '''
@@ -114,7 +123,7 @@ class Account(object):
             if metadata:
                 self._metadata = metadata
             else:
-                metadata = self._metadata
+                metadata = self._metadata # TODO why is this here?
             self.save()
         else:
             if not metadata:
@@ -132,26 +141,33 @@ class Account(object):
         self._collection.write(self.TRANSACTIONS, self._data,
                                metadata=self._metadata, overwrite=True)
 
+    def plot(self):
+        ''' '''
+        import matplotlib.pyplot as plt
+        plt.plot(self._data.index, self._data['balance'])
+        plt.show()
+
     def __str__(self):
         ''' Returns a user-readable string of this Account. '''
         balance = self.get_balance()
         balance_str = 'Balance = ${} ({})'.format(balance[0],
                                                   balance.index.date[0])
-        tracked_from = 'Tracked from ({})'.format(
+        tracked_from = 'Tracked from {}'.format(
             self._data.head(1).index.date[0])
-        return 'Account({self.name} - {self.number}):\n\t{}\n\t{}'.format(
-            self, '\n\t'.join(balance_str, tracked_from),
-            '\n\t'.join(key + ' = ' + self._metadata[key]
-                    for key in self._metadata if key != self.NUMBER))
+        return 'Account({} - {}):\n\t{}\n\t{}'.format(
+            self.name, self.number, '\n\t'.join((balance_str, tracked_from)),
+            '\n\t'.join([key + ' = ' + value \
+                         for (key, value) in self._metadata.items()
+                         if key != self.NUMBER]))
 
 
 class Stock(object):
     ''' '''
     # accessor strings
     DIVIDENDS = 'dividends'
-    PURCHASED = 'purchased'
-    BROKERAGE = 'brokerage'
-    QUANTITY  = 'quantity'
+    PURCHASES = 'purchases'
+    BROKERAGE = 'total_brokerage'
+    QUANTITY  = 'owned_quantity'
     NAME      = 'name'
 
     # internal classes for convenience of presentation of metadata
@@ -168,6 +184,7 @@ class Stock(object):
                 uninvested due to being insufficient for a full share.
 
             '''
+            date = str(date)
             super().__init__(type_=type_, amount=amount, date=date,
                              balance=balance)
             self.date    = date
@@ -188,9 +205,14 @@ class Stock(object):
             return ret_val + ')'
 
     class Purchase(dict):
-        ''' A single purchase of this stock. '''
-        def __init__(self, quantity, date, unit_cost=0.0, brokerage=0.0):
-            ''' Store the information in a stock purchase. '''
+        ''' A single purchase/sale of this stock. '''
+        def __init__(self, quantity, date, unit_cost, brokerage):
+            ''' Store the information in a stock purchase/sale.
+
+            A Sale is a Purchase with a negative quantity.
+
+            '''
+            date = str(date)
             super().__init__(quantity=quantity, date=date,
                              unit_cost=unit_cost, brokerage=brokerage)
             self.date      = date
@@ -198,42 +220,67 @@ class Stock(object):
             self.unit_cost = unit_cost
             self.brokerage = brokerage
 
-        def get_value(self, brokerage=False):
+        def get_cost(self, brokerage=False):
+            ''' Returns the total amount paid, optionally with brokerage. '''
             value = self.unit_cost * self.quantity
             if brokerage:
                 value += self.brokerage
             return value
 
-         def __repr__(self):
+        def __repr__(self):
             ''' '''
-            total = self.quantity * self.unit_cost
-            return 'Purchase: ${:.2f} ({}x${:.2f}) + ${} brokerage on {}'\
-                    .format(total, self.quantity, self.unit_cost,
+            quantity = self.quantity
+            if quantity < 0:
+                quantity *= -1
+                type_ = 'Sale'
+            else:
+                type_ = 'Purchase'
+
+            return '{}: ${:.2f} ({}x${:.2f}) + ${} brokerage on {}'\
+                    .format(type_, self.get_cost(), quantity, self.unit_cost,
                             self.brokerage, self.date)
 
+    def __init__(self, collection, symbol, apikey, name='', quantity=None,
+                 purchase_date=None, unit_cost=None, brokerage=None,
+                 **metadata):
+        ''' Tracks a stock. If the stock is not already tracked, records the
+            specified purchase information for a new purchase of the stock.
 
-    def __init__(self, collection, symbol, name=None, purchase_date=None,
-                 brokerage=0.0, quantity=None, **metadata):
-        ''' '''
+        '''
+        # TODO add option to ignore apikey and only display latest saved values
+        #   (e.g. for offline usage)
         self._collection = collection
-        self.symbol
+        self.symbol = symbol
         if symbol not in collection.list_items():
             # stock is new, populate and add user specified metadata
-            self._data = self.update_data(symbol, purchase_date)
-            self._metadata = metadata
-            self._metadata.update({
-                self.PURCHASED: [],
+            self._data = self.get_data(symbol, np.datetime64(purchase_date),
+                                       apikey)
+            self._metadata = {
+                self.PURCHASES: [],
                 self.DIVIDENDS: [],
-                self.BROKERAGE: 0.0,
-                self.QUANTITY:  quantity,
+                self.BROKERAGE: 0.0, # updated in add_quantity call
+                self.QUANTITY:  0,
                 self.NAME:      name,
-            })
-            self.add_quantity(quantity, brokerage, purchase_date)
+            }
+            self._metadata.update(metadata)
+            purchase_data = (quantity, purchase_date, unit_cost, brokerage)
+            if None in purchase_data:
+                raise Exception("quantity, purchase_date, unit_cost and "
+                                "brokerage must be specified for a purchase")
+            self.add_quantity(*purchase_data)
         else:
             # existing stock, get stored metadata, ignore inputs
             item = collection.item(symbol)
             self._metadata = item.metadata
-            self._data = item.to_pandas()
+
+            # update with latest stock values (if appropriate)
+            latest_date = item.to_pandas().index[-1]
+            if latest_date < np.datetime64('today'):
+                collection.append(symbol,
+                                  self.get_data(symbol, latest_date, apikey))
+
+            # retrieve updated data
+            self._data = collection.item(symbol).to_pandas()
 
     @property
     def name(self):
@@ -241,48 +288,48 @@ class Stock(object):
 
     @property
     def quantity(self):
-        return self._metadata[self.QUANTITY]
+        ''' The current owned quantity of the stock. '''
+        return self._metadata[self.QUANTITY] # TODO 'as at date' option
 
     @property
     def brokerage(self):
-        return self._metadata[self.BROKERAGE]
+        ''' The total brokerage paid for the stock. '''
+        return self._metadata[self.BROKERAGE] # TODO function w/ date range
 
     def get_purchase_history(self):
-        return [self.Purchase(**kwargs) \
-                for kwargs in self._metadata[self.PURCHASED]]
+        return [purchase if isinstance(purchase, self.Purchase) else
+                self.Purchase(**purchase) # must be dict of purchase data
+                for kwargs in self._metadata[self.PURCHASES]]
 
     def get_dividend_history(self):
-        return [self.Dividend(**kwargs) \
-                for kwargs in self._metadata[self.DIVIDENDS]]
-
-    def add_dividend(self, type_, amount, date, balance=0.0):
-        ''' '''
-        dividend = self.Dividend(type_, amount, date, balance)
-        self._metadata[self.DIVIDENDS].append(dividend)
-        if type_ == dividend.REINVESTMENT:
-            self._metadata[self.QUANTITY] += dividend.amount
-        self.save()
-
-    def add_quantity(self, quantity, date, unit_cost=0.0, brokerage=0.0):
-        ''' '''
-        purchase = self.Purchase(quantity, unit_cost, brokerage, date)
-        self._metadata[self.QUANTITY]  += quantity
-        self._metadata[self.BROKERAGE] += brokerage
-        self._metadata[self.PURCHASED].append(purchase)
-        self.save()
+        return [dividend if isinstance(dividend, self.Dividend) else
+                self.Dividend(**dividend) # must be dict of dividend data
+                for dividend in self._metadata[self.DIVIDENDS]]
 
     def get_value(self, unit=False):
         ''' Returns the latest stored unit/full value of this stock. '''
+        # TODO 'as at date' option
         unit_val = self._data.tail(1)[0]
         if not unit:
-            return unit_val * self._quantity
+            return unit_val * self.quantity
         return unit_val
 
     def get_profit(self, stored_balance=True, brokerage=False, relative=False):
-        ''' Returns absolute ($) or relative (%) profit for this stock. '''
+        ''' Returns absolute ($) or relative (%) profit for this stock.
+
+        Includes dividend shares in valuation, and optionally includes
+            brokerage costs, and dividends paid as balance.
+
+        Setting 'relative' to True returns a percentage increase of the
+            current valuation over the total costs from all tracked purchases
+            of this stock.
+
+        '''
+        # TODO add optional start and end dates to calculate profit since
+        #   or up to given date, or over specified time bracket
         value = self.get_value()
         purchases = self.get_purchase_history()
-        cost = sum([purchase.get_value(brokerage) for purchase in purchases])
+        cost = sum([purchase.get_cost(brokerage) for purchase in purchases])
 
         if stored_balance:
             value += self.get_dividend_history()[-1].balance
@@ -291,6 +338,27 @@ class Stock(object):
             return value / cost - 1
         return value - cost
 
+    def add_dividend(self, type_, amount, date, balance=0.0):
+        '''
+
+        'type_' should be one of Stock.Dividend.REINVESTMENT or
+            Stock.Dividend.DEPOSIT
+
+        '''
+        dividend = self.Dividend(type_, amount, date, balance)
+        self._metadata[self.DIVIDENDS].append(dividend)
+        if type_ == dividend.REINVESTMENT:
+            self._metadata[self.QUANTITY] += dividend.amount
+        self.save()
+
+    def add_quantity(self, quantity, date, unit_cost, brokerage):
+        ''' '''
+        purchase = self.Purchase(quantity, date, unit_cost, brokerage)
+        self._metadata[self.QUANTITY]  += quantity
+        self._metadata[self.BROKERAGE] += brokerage
+        self._metadata[self.PURCHASES].append(purchase)
+        self.save()
+
     def save(self):
         ''' Save the current state of this stock. '''
         self._collection.write(self.symbol, self._data,
@@ -298,28 +366,142 @@ class Stock(object):
 
     def __str__(self):
         ''' '''
-        return 'Stock:\n\t' # TODO
+        return 'Stock:\n\t' + '\n\t'.join('{}={}'.format(key, value) for
+                                          key, value in self._metadata.items())
+
+    def __repr__(self):
+        ''' '''
+        return str(self)
+
+    @classmethod
+    def get_data(cls, symbol, start_date, apikey,
+                 function='TIME_SERIES_DAILY', **params):
+        ''' Returns close data for 'symbol' stock since 'start_date'.
+
+        Requires an AlphaVantage API key.
+
+        Parameters are as defined by the AlphaVantage API.
+
+        'start_date' should be of datetime64[ns] format.
+
+        '''
+        # update parameters
+        params.update(dict(symbol=symbol, apikey=apikey, function=function))
+
+        query_minute = np.datetime64('now').tolist().minute
+
+        # If extra functionality is needed, probably best to transfer to using
+        #   the open-source alpha_vantage library (pip-installable), but for
+        #   now that would just add excess overhead
+        with url_query('alphavantage.co/query?', params=params) as query:
+            data = query.json()
+
+        # parse and format data
+        try:
+            data.pop('Meta Data')
+        except KeyError:
+            error = data.get('Error Message', None)
+            if error:
+
+                raise IOError(error)
+            else:
+                # too many calls for API plan (for free key, >5/min or >500)
+                print(data['Note'])
+                print('Auto-retrying on new minute.')
+                while np.datetime64('now').tolist().minute == query_minute:
+                    pass # wait until next minute
+                return cls.get_data(symbol, start_date, apikey, function,
+                                    **params)
+
+        # only data item remaining, get it and create a DataFrame
+        data = pd.DataFrame(list(data.values())[0]).transpose()
+        data.index = data.index.astype('datetime64[ns]')
+
+        # check if retrieved data is sufficient
+        if data.index[0] > start_date and \
+                params.get('outputsize', None) != 'full':
+            # doesnt't go far enough back, get more data
+            params['outputsize'] = 'full'
+            try:
+                return cls.get_data(start_date=start_date, **params)
+            except IOError as e:
+                print(e)
+
+        # only get market close values (removes open, high, low, and volume)
+        data = data['4. close'].to_frame(name='Daily Close')
+        data.name = symbol
+        return data.astype(float)[data.index >= start_date].sort_index()
+
 
 class StocksAccount(Account):
     ''' '''
     def __init__(self, store, name=None, number=None, data=None, save=True,
-                 **metadata):
+                 apikey=None, **metadata):
         super().__init__(store, name, number, data, save, **metadata)
+        self.__sqolru = apikey
+        self._load_stocks()
 
-    def add_stock(self, name, symbol, purchase_date, purchase_price,
-                  brokerage):
-        ''' '''
-        pass
+    def _load_stocks(self):
+        ''' Load existing stocks from the collection. '''
+        self._stocks  = dict()
+        self._names   = dict()
+
+        # initialise previously stored stocks from storage
+        for symbol in self._collection.list_items():
+            if symbol == self.TRANSACTIONS: continue
+            # otherwise assume to be a valid stock symbol
+            stock = Stock(self._collection, symbol, self.__sqolru)
+            self._stocks[symbol] = stock
+            self._names[stock.name] = symbol
+
+    def add_stock(self, symbol, name, quantity, purchase_date, unit_cost,
+                  brokerage, **metadata):
+        ''' Add a new stock to the account - must occur as a purchase. '''
+        self._stocks[symbol] = Stock(self._collection, symbol, self.__sqolru,
+                                     name, quantity, purchase_date, unit_cost,
+                                     brokerage, **metadata)
+        self._names[name] = symbol
+
+    def delete_stock(self, symbol):
+        ''' Delete a stock (permanently) by name/symbol. '''
+        stock  = self.get_stock(symbol)
+        symbol = stock.symbol
+        self._stocks.pop(symbol)
+        self._names.pop(stock.name)
+        self._collection.delete_item(symbol)
+
+    def add_quantity(symbol, quantity, date, unit_cost, brokerage):
+        ''' Make an additional purchase of an existing stock by name/symbol '''
+        return self.get_stock(symbol) \
+                   .add_quantity(quantity, date, unit_cost, brokerage)
+
+    def add_dividend(symbol, type_, amount, date, balance):
+        ''' Add a dividend to an existing stock by name/symbol. '''
+        return self.get_stock(symbol) \
+                   .add_dividend(type_, amount, date, balance)
 
     def get_stock(self, name):
-        ''' symbol or name '''
-        return self._stocks.get(name, self._stocks[self._names[name]])
+        ''' get by symbol or name '''
+        stock = self._stocks.get(name, None)
+        if not stock:
+            stock = self._stocks[self._names[name]]
+        return stock
 
     def __str__(self):
         ''' '''
-        pass
-
+        return 'Stocks' + super().__str__() + '\n\tStocks:\n\n\t' + \
+                '\n\n\n\t'.join('{}\n\t{!s}'.format(symbol, stock) for \
+                                symbol, stock in self._stocks.items())
 
 
 if __name__ == '__main__':
-    print('boop')
+    pystore.set_path('./db')
+    store = pystore.store('accounts')
+    savings = Account(store, 'savings')
+    with open('API_KEY.txt') as magical_key:
+        apikey = magical_key.readline()
+    stocks = StocksAccount(store, 'stocks', apikey=apikey)
+    print(savings)
+    print(stocks)
+
+    # TODO ADD DIVIDENDS 
