@@ -11,6 +11,7 @@ import pystore
 import requests
 import numpy as np
 import pandas as pd
+from time import sleep
 url_query = lambda url, *a, **kw: requests.get('https://www.'+url, *a, **kw)
 
 class Account(object):
@@ -97,6 +98,24 @@ class Account(object):
         if not item:
             item = self.TRANSACTIONS
         self._collection.append(item, new_data)
+
+    def prepend_data(self, new_data, item=None):
+        ''' Add data to the start of the current data-store.
+
+        'new_data' must have the same column_format as the existing data.
+
+        If 'item' is left as None, defaults to the transactions item, else
+            updates the specified item in this account.
+
+        self.prepend_data(pd.DataFrame, *None/str) -> None
+
+        '''
+        if not item:
+            item = self.TRANSACTIONS
+        item = self._collection.item(item)
+        metadata = item.metadata
+        all_data = new_data.append(item.to_pandas())
+        self.overwrite_data(all_data, metadata, item)
 
     def overwrite_data(self, new_data, metadata=None, item=None):
         ''' Overwrite the data, and optionally metadata of an item.
@@ -189,19 +208,19 @@ class Stock(object):
                              balance=balance)
             self.date    = date
             self.type    = type_
-            self.amount  = amount
-            self.balance = balance
+            self.amount  = float(amount)
+            self.balance = float(balance)
 
         def __repr__(self):
             ''' A string representation of this Dividend. '''
             ret_val = 'Dividend('
             if self.type == self.DEPOSIT:
-                ret_val += str(amount) + ' shares'
+                ret_val += str(self.amount) + ' shares'
             else:
-                ret_val += '${:.2f}'.format(amount)
-            ret_val += ' ({self.date})'.format(self)
-            if balance:
-                ret_val += ' + ${self.balance} balance'.format(self)
+                ret_val += '${:.2f}'.format(self.amount)
+            ret_val += ' ({})'.format(self.date)
+            if self.balance:
+                ret_val += ' + ${} balance'.format(self.balance)
             return ret_val + ')'
 
     class Purchase(dict):
@@ -216,9 +235,9 @@ class Stock(object):
             super().__init__(quantity=quantity, date=date,
                              unit_cost=unit_cost, brokerage=brokerage)
             self.date      = date
-            self.quantity  = quantity
-            self.unit_cost = unit_cost
-            self.brokerage = brokerage
+            self.quantity  = float(quantity)
+            self.unit_cost = float(unit_cost)
+            self.brokerage = float(brokerage)
 
         def get_cost(self, brokerage=False):
             ''' Returns the total amount paid, optionally with brokerage. '''
@@ -240,21 +259,22 @@ class Stock(object):
                     .format(type_, self.get_cost(), quantity, self.unit_cost,
                             self.brokerage, self.date)
 
-    def __init__(self, collection, symbol, apikey, name='', quantity=None,
+    def __init__(self, collection, symbol, apikey=None, name='', quantity=None,
                  purchase_date=None, unit_cost=None, brokerage=None,
                  **metadata):
         ''' Tracks a stock. If the stock is not already tracked, records the
             specified purchase information for a new purchase of the stock.
 
+        'apikey' is the AlphaVantage api-key for retrieving stock data.
+            Must be provided for new stocks. If provided for an existing stock,
+            that stock is updated with the latest data, else only the existing
+            data is used.
         '''
-        # TODO add option to ignore apikey and only display latest saved values
-        #   (e.g. for offline usage)
         self._collection = collection
         self.symbol = symbol
         if symbol not in collection.list_items():
             # stock is new, populate and add user specified metadata
-            self._data = self.get_data(symbol, np.datetime64(purchase_date),
-                                       apikey)
+            self._data = self.get_data(symbol, purchase_date, apikey)
             self._metadata = {
                 self.PURCHASES: [],
                 self.DIVIDENDS: [],
@@ -273,11 +293,17 @@ class Stock(object):
             item = collection.item(symbol)
             self._metadata = item.metadata
 
-            # update with latest stock values (if appropriate)
+            # update with latest stock values (if desired and appropriate)
             latest_date = item.to_pandas().index[-1]
-            if latest_date < np.datetime64('today'):
-                collection.append(symbol,
-                                  self.get_data(symbol, latest_date, apikey))
+            if apikey and latest_date < np.datetime64('today') - 1:
+                try:
+                    collection.append(symbol, self.get_data(symbol,
+                                                  latest_date, apikey))
+                except IOError as e:
+                    print('Could not update data!')
+                    print(e)
+            elif not apikey:
+                print('No API key provided - using stored data.')
 
             # retrieve updated data
             self._data = collection.item(symbol).to_pandas()
@@ -297,22 +323,39 @@ class Stock(object):
         return self._metadata[self.BROKERAGE] # TODO function w/ date range
 
     def get_purchase_history(self):
-        return [purchase if isinstance(purchase, self.Purchase) else
+        self._metadata[self.PURCHASES] = [purchase if
+                isinstance(purchase, self.Purchase) else
                 self.Purchase(**purchase) # must be dict of purchase data
-                for kwargs in self._metadata[self.PURCHASES]]
+                for purchase in self._metadata[self.PURCHASES]]
+        return self._metadata[self.PURCHASES]
 
     def get_dividend_history(self):
-        return [dividend if isinstance(dividend, self.Dividend) else
+        self._metadata[self.DIVIDENDS] = [dividend if
+                isinstance(dividend, self.Dividend) else
                 self.Dividend(**dividend) # must be dict of dividend data
                 for dividend in self._metadata[self.DIVIDENDS]]
+        return self._metadata[self.DIVIDENDS]
 
-    def get_value(self, unit=False):
-        ''' Returns the latest stored unit/full value of this stock. '''
-        # TODO 'as at date' option
-        unit_val = self._data.tail(1)[0]
+    def get_value(self, stored_balance=False, unit=False):
+        ''' Returns the latest stored unit/full value of this stock.
+
+        if not 'unit', can include 'stored_balance'
+
+        '''
+        # TODO 'as at date' and 'over time' options
+        value = self._data.tail(1)['Daily Close'][0]
         if not unit:
-            return unit_val * self.quantity
-        return unit_val
+            value *= self.quantity
+            if stored_balance:
+                dividends = self.get_dividend_history()
+                if dividends:
+                    value += dividends[-1].balance
+        return value
+
+    def get_cost(self, brokerage=False):
+        ''' Returns the total cost of this stock - brokerage optional. '''
+        return sum([purchase.get_cost(brokerage) for purchase in
+                    self.get_purchase_history()])
 
     def get_profit(self, stored_balance=True, brokerage=False, relative=False):
         ''' Returns absolute ($) or relative (%) profit for this stock.
@@ -327,12 +370,8 @@ class Stock(object):
         '''
         # TODO add optional start and end dates to calculate profit since
         #   or up to given date, or over specified time bracket
-        value = self.get_value()
-        purchases = self.get_purchase_history()
-        cost = sum([purchase.get_cost(brokerage) for purchase in purchases])
-
-        if stored_balance:
-            value += self.get_dividend_history()[-1].balance
+        value = self.get_value(stored_balance)
+        cost  = self.get_cost(brokerage)
 
         if relative:
             return value / cost - 1
@@ -366,8 +405,17 @@ class Stock(object):
 
     def __str__(self):
         ''' '''
-        return 'Stock:\n\t' + '\n\t'.join('{}={}'.format(key, value) for
-                                          key, value in self._metadata.items())
+        # update purchases and dividends to correct format
+        self.get_purchase_history()
+        self.get_dividend_history()
+        # create desired output string
+        sep = '\n' + ' ' * 4
+        return ('Stock:{sep}value=${:.2f} (at {date})'
+                '{sep}profit=${:.2f} (at {date}){sep}').format(
+                    self.get_value(), self.get_profit(),
+                    sep=sep, date=np.datetime64('today')) + \
+                sep.join('{}={}'.format(key, value) for
+                         key, value in self._metadata.items())
 
     def __repr__(self):
         ''' '''
@@ -395,6 +443,7 @@ class Stock(object):
         #   now that would just add excess overhead
         with url_query('alphavantage.co/query?', params=params) as query:
             data = query.json()
+            url  = query.url
 
         # parse and format data
         try:
@@ -402,22 +451,23 @@ class Stock(object):
         except KeyError:
             error = data.get('Error Message', None)
             if error:
-
+                # add url to error message
+                error = error.replace('.', ' ({}).'.format(url), 1)
                 raise IOError(error)
             else:
                 # too many calls for API plan (for free key, >5/min or >500)
                 print(data['Note'])
                 print('Auto-retrying on new minute.')
                 while np.datetime64('now').tolist().minute == query_minute:
-                    pass # wait until next minute
-                return cls.get_data(symbol, start_date, apikey, function,
-                                    **params)
+                    sleep(1) # wait until next minute
+                return cls.get_data(start_date=start_date, **params)
 
         # only data item remaining, get it and create a DataFrame
         data = pd.DataFrame(list(data.values())[0]).transpose()
         data.index = data.index.astype('datetime64[ns]')
 
         # check if retrieved data is sufficient
+        start_date = np.datetime64(start_date)
         if data.index[0] > start_date and \
                 params.get('outputsize', None) != 'full':
             # doesnt't go far enough back, get more data
@@ -436,12 +486,12 @@ class Stock(object):
 class StocksAccount(Account):
     ''' '''
     def __init__(self, store, name=None, number=None, data=None, save=True,
-                 apikey=None, **metadata):
+                 apikey=None, update=True, **metadata):
         super().__init__(store, name, number, data, save, **metadata)
         self.__sqolru = apikey
-        self._load_stocks()
+        self._load_stocks(update)
 
-    def _load_stocks(self):
+    def _load_stocks(self, update):
         ''' Load existing stocks from the collection. '''
         self._stocks  = dict()
         self._names   = dict()
@@ -450,7 +500,8 @@ class StocksAccount(Account):
         for symbol in self._collection.list_items():
             if symbol == self.TRANSACTIONS: continue
             # otherwise assume to be a valid stock symbol
-            stock = Stock(self._collection, symbol, self.__sqolru)
+            stock = Stock(self._collection, symbol, self.__sqolru,
+                          update=update)
             self._stocks[symbol] = stock
             self._names[stock.name] = symbol
 
@@ -470,12 +521,12 @@ class StocksAccount(Account):
         self._names.pop(stock.name)
         self._collection.delete_item(symbol)
 
-    def add_quantity(symbol, quantity, date, unit_cost, brokerage):
+    def add_quantity(self, symbol, quantity, date, unit_cost, brokerage):
         ''' Make an additional purchase of an existing stock by name/symbol '''
         return self.get_stock(symbol) \
                    .add_quantity(quantity, date, unit_cost, brokerage)
 
-    def add_dividend(symbol, type_, amount, date, balance):
+    def add_dividend(self, symbol, type_, amount, date, balance):
         ''' Add a dividend to an existing stock by name/symbol. '''
         return self.get_stock(symbol) \
                    .add_dividend(type_, amount, date, balance)
@@ -487,11 +538,28 @@ class StocksAccount(Account):
             stock = self._stocks[self._names[name]]
         return stock
 
+    def get_profit(self, stored_balance=True, brokerage=True, relative=False):
+        ''' Returns the total profit of the stocks in this account. '''
+        if not relative:
+            return sum([stock.get_profit(stored_balance, brokerage) for
+                        stock in self._stocks.values()])
+        else:
+            value = 0
+            cost = 0
+            for stock in self._stocks.values():
+                value += stock.get_value(stored_balance)
+                cost += stock.get_cost(brokerage)
+            return value / cost - 1
+
     def __str__(self):
         ''' '''
-        return 'Stocks' + super().__str__() + '\n\tStocks:\n\n\t' + \
-                '\n\n\n\t'.join('{}\n\t{!s}'.format(symbol, stock) for \
-                                symbol, stock in self._stocks.items())
+        sep = '\n  '
+        return 'Stocks{}{sep}profit={} ({:.2f}%){sep}Stocks:\n{sep}'.format(
+            super().__str__(), self.get_profit(),
+            100*self.get_profit(relative=True), sep=sep) +\
+            '\n\n{sep}'.join('{}{}{!s}'.format(symbol, sep, stock) for \
+                             symbol, stock in self._stocks.items()) \
+                .format(sep=sep)
 
 
 if __name__ == '__main__':
@@ -502,6 +570,6 @@ if __name__ == '__main__':
         apikey = magical_key.readline()
     stocks = StocksAccount(store, 'stocks', apikey=apikey)
     print(savings)
+    print()
     print(stocks)
 
-    # TODO ADD DIVIDENDS 
